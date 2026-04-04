@@ -1,38 +1,63 @@
 """
-Flask File Upload API
-=====================
-A beginner-friendly Flask app that accepts file uploads via a POST request
-to the /upload endpoint and saves them to an "uploads" folder.
+Flask File Upload API — with Validation
+========================================
+A beginner-friendly Flask app that validates and saves uploaded files.
+
+Validation rules:
+  - Allowed MIME types: image/jpeg, image/png, application/pdf
+  - Maximum file size: 2 MB
 
 How to run:
     1. Install dependencies:
            pip install -r requirements.txt
     2. Start the server:
            python app.py
-    3. The server will run at http://localhost:5000
+    3. The server runs at: http://localhost:5000
 
-How to test (with curl):
-    curl -X POST http://localhost:5000/upload -F "file=@/path/to/your/file.txt"
+How to test (Postman):
+    POST http://localhost:5000/upload
+    Body → form-data → key: "file" (type: File) → pick a .jpg / .png / .pdf
 
-How to test (with Postman):
-    - Method: POST
-    - URL: http://localhost:5000/upload
-    - Body: form-data, key = "file" (type = File), value = choose a file
+How to test (curl):
+    curl -X POST http://localhost:5000/upload -F "file=@photo.jpg"
 """
 
 import os
+import magic                          # python-magic: reads actual file bytes to detect type
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
-# Initialize the Flask application
+# ─────────────────────────────────────────────
+#  Configuration constants
+# ─────────────────────────────────────────────
+
+UPLOAD_FOLDER = "uploads"            # Folder where valid files will be saved
+
+MAX_FILE_SIZE_MB = 2                 # Maximum allowed file size in megabytes
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024  # Convert MB → bytes (2,097,152)
+
+# Only these MIME types are accepted.
+# MIME type describes WHAT a file actually is (e.g. "image/jpeg"), not just its extension.
+ALLOWED_MIME_TYPES = {
+    "image/jpeg",        # .jpg / .jpeg images
+    "image/png",         # .png images
+    "application/pdf",   # .pdf documents
+}
+
+# ─────────────────────────────────────────────
+#  App setup
+# ─────────────────────────────────────────────
+
 app = Flask(__name__)
 
-# Name of the folder where uploaded files will be saved
-UPLOAD_FOLDER = "uploads"
+# Tell Flask the maximum request body size.
+# Requests larger than this are automatically rejected with HTTP 413
+# before they even reach our route handler.
+app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_BYTES
 
-# Tell Flask where to save uploaded files
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
+# ─────────────────────────────────────────────
+#  Helper functions
+# ─────────────────────────────────────────────
 
 def ensure_upload_folder():
     """Create the uploads folder if it does not already exist."""
@@ -41,95 +66,215 @@ def ensure_upload_folder():
         print(f'Created folder: "{UPLOAD_FOLDER}"')
 
 
-@app.route("/upload", methods=["POST"])
-def upload_file():
+def error_response(message, status_code=400):
     """
-    POST /upload
-    ------------
-    Accepts a file uploaded via multipart/form-data.
-    The form field name must be "file".
+    Build a standard JSON error response.
 
-    Returns a JSON response with:
-        - success (bool): whether the upload succeeded
-        - message (str): a human-readable status message
-        - filename (str): the name the file was saved as (only on success)
+    Args:
+        message (str): A human-readable description of the problem.
+        status_code (int): HTTP status code to return (default: 400 Bad Request).
 
-    Error cases handled:
-        - No file included in the request
-        - File field is present but no file was chosen (empty filename)
+    Returns:
+        A Flask JSON response tuple (response, status_code).
     """
+    return jsonify({"success": False, "message": message}), status_code
 
-    # Check that the request contains a "file" field at all
-    if "file" not in request.files:
-        return (
-            jsonify({
-                "success": False,
-                "message": 'No file field found in the request. '
-                           'Make sure you send a multipart/form-data request '
-                           'with a field named "file".'
-            }),
-            400,  # HTTP 400 Bad Request
-        )
 
-    file = request.files["file"]
+def success_response(filename):
+    """
+    Build a standard JSON success response.
 
-    # Check that a file was actually selected (not an empty file input)
-    if file.filename == "":
-        return (
-            jsonify({
-                "success": False,
-                "message": "No file was selected. Please choose a file before uploading."
-            }),
-            400,
-        )
+    Args:
+        filename (str): The name of the file that was saved.
 
-    # secure_filename strips dangerous characters from the filename
-    # (e.g. path traversal like "../../etc/passwd" becomes "etc_passwd")
-    filename = secure_filename(file.filename)
+    Returns:
+        A Flask JSON response tuple (response, 200).
+    """
+    return jsonify({
+        "success": True,
+        "message": "File uploaded successfully!",
+        "filename": filename,
+    }), 200
 
-    # Build the full path where the file will be saved
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
 
-    # Save the file to disk
-    file.save(save_path)
+def get_mime_type(file_stream):
+    """
+    Detect the true MIME type of a file by reading its first few bytes.
 
-    # Return a success response with the saved filename
-    return (
-        jsonify({
-            "success": True,
-            "message": "File uploaded successfully!",
-            "filename": filename
-        }),
-        200,  # HTTP 200 OK
+    Why not trust the filename extension?
+    Someone could rename a virus.exe to photo.jpg and fool an extension check.
+    Reading the actual bytes ("magic bytes") is much more reliable.
+
+    Args:
+        file_stream: The file object from request.files.
+
+    Returns:
+        str: The detected MIME type, e.g. "image/jpeg".
+    """
+    # Read only the first 2048 bytes — enough to identify the file type
+    header = file_stream.read(2048)
+
+    # Rewind the file so it can be read again later when saving
+    file_stream.seek(0)
+
+    # python-magic inspects the raw bytes and returns the MIME type string
+    mime = magic.from_buffer(header, mime=True)
+    return mime
+
+
+def is_valid_mime_type(mime_type):
+    """
+    Check whether the detected MIME type is in our allowed list.
+
+    Args:
+        mime_type (str): The MIME type to check.
+
+    Returns:
+        bool: True if allowed, False otherwise.
+    """
+    return mime_type in ALLOWED_MIME_TYPES
+
+
+def is_within_size_limit(file_stream):
+    """
+    Check whether the file is within the allowed size limit.
+
+    We measure the actual file size by seeking to the end and checking
+    the position, which is more accurate than relying on Content-Length headers.
+
+    Args:
+        file_stream: The file object from request.files.
+
+    Returns:
+        bool: True if the file is within the size limit, False if it is too large.
+    """
+    # Move to the end of the file to find its total size
+    file_stream.seek(0, os.SEEK_END)
+    file_size = file_stream.tell()   # Current position = file size in bytes
+
+    # Rewind so the file can be read again when saving
+    file_stream.seek(0)
+
+    return file_size <= MAX_FILE_SIZE_BYTES
+
+
+# ─────────────────────────────────────────────
+#  Error handlers
+# ─────────────────────────────────────────────
+
+@app.errorhandler(413)
+def request_too_large(error):
+    """
+    Handle HTTP 413 — Request Entity Too Large.
+
+    Flask raises this automatically when the incoming request exceeds
+    MAX_CONTENT_LENGTH. We return our own friendly JSON message instead
+    of a generic HTML error page.
+    """
+    return error_response(
+        f"File is too large. Maximum allowed size is {MAX_FILE_SIZE_MB} MB.",
+        status_code=413,
     )
 
+
+# ─────────────────────────────────────────────
+#  Routes
+# ─────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def index():
     """
     GET /
     -----
-    A simple health-check endpoint so you can verify the server is running.
-    Visit http://localhost:5000 in your browser to confirm.
+    Health-check endpoint. Visit http://localhost:5000 in your browser
+    to confirm the server is running.
     """
     return jsonify({
         "message": "Flask File Upload API is running!",
         "upload_endpoint": "POST /upload",
-        "instructions": "Send a multipart/form-data POST request to /upload with a field named 'file'."
+        "allowed_types": sorted(ALLOWED_MIME_TYPES),
+        "max_file_size": f"{MAX_FILE_SIZE_MB} MB",
     })
 
 
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    """
+    POST /upload
+    ------------
+    Accepts a single file upload via multipart/form-data.
+    The form field key must be named "file".
+
+    Validation steps (in order):
+        1. Check that the "file" field exists in the request.
+        2. Check that a file was actually chosen (non-empty filename).
+        3. Check that the file size is within the 2 MB limit.
+        4. Check that the file's MIME type is in the allowed list.
+
+    On success:
+        - Saves the file to the "uploads/" folder.
+        - Returns HTTP 200 with { success, message, filename }.
+
+    On failure:
+        - Returns HTTP 400 (or 413 for size) with { success, message }.
+    """
+
+    # ── Step 1: Make sure the "file" field is present in the request ──────────
+    if "file" not in request.files:
+        return error_response(
+            'No "file" field found in the request. '
+            "Send a multipart/form-data POST with a field named \"file\"."
+        )
+
+    file = request.files["file"]
+
+    # ── Step 2: Make sure the user actually selected a file ───────────────────
+    if file.filename == "":
+        return error_response("No file was selected. Please choose a file before uploading.")
+
+    # ── Step 3: Check file size ───────────────────────────────────────────────
+    # Note: Flask's MAX_CONTENT_LENGTH already blocks huge requests, but we
+    # also check manually here for a consistent JSON error message.
+    if not is_within_size_limit(file.stream):
+        return error_response(
+            f"File is too large. Maximum allowed size is {MAX_FILE_SIZE_MB} MB.",
+            status_code=413,
+        )
+
+    # ── Step 4: Validate MIME type by inspecting the file's actual bytes ──────
+    detected_mime = get_mime_type(file.stream)
+
+    if not is_valid_mime_type(detected_mime):
+        allowed = ", ".join(sorted(ALLOWED_MIME_TYPES))
+        return error_response(
+            f'Invalid file type: "{detected_mime}". '
+            f"Allowed types are: {allowed}."
+        )
+
+    # ── Save the file ─────────────────────────────────────────────────────────
+    # secure_filename removes dangerous characters (e.g. "../" path traversal)
+    filename = secure_filename(file.filename)
+    save_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(save_path)
+
+    return success_response(filename)
+
+
+# ─────────────────────────────────────────────
+#  Entry point
+# ─────────────────────────────────────────────
+
 if __name__ == "__main__":
-    # Make sure the uploads folder exists before starting
     ensure_upload_folder()
 
-    print("===========================================")
-    print("  Flask File Upload API")
-    print("  Server running at http://localhost:5000")
-    print("  Upload endpoint: POST /upload")
-    print("===========================================")
+    print("==============================================")
+    print("  Flask File Upload API  (with validation)")
+    print("  Server: http://localhost:5000")
+    print("  Endpoint: POST /upload")
+    print(f"  Allowed types: {', '.join(sorted(ALLOWED_MIME_TYPES))}")
+    print(f"  Max size: {MAX_FILE_SIZE_MB} MB")
+    print("==============================================")
 
-    # debug=True enables auto-reload when you edit the code
-    # and shows detailed error messages in the browser.
-    # Set debug=False (or remove it) before going to production.
+    # debug=True: auto-reloads when you save the file, shows detailed errors.
+    # Change to debug=False before deploying to production.
     app.run(debug=True, host="0.0.0.0", port=5000)
