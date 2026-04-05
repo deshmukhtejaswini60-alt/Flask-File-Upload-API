@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flask File Upload</title>
+  <style>
+    /* ── Page layout ── */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: #1a202c;
+      margin-bottom: 0.4rem;
+    }
+
+    .subtitle {
+      color: #718096;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    /* ── Drop zone / file picker ── */
+    .drop-zone {
+      border: 2px dashed #cbd5e0;
+      border-radius: 8px;
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 1.25rem;
+      position: relative;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: #4299e1;
+      background: #ebf8ff;
+    }
+
+    /* Hide the default file input but keep it clickable */
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-zone-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .drop-zone-text {
+      color: #4a5568;
+      font-size: 0.95rem;
+    }
+
+    .drop-zone-hint {
+      color: #a0aec0;
+      font-size: 0.8rem;
+      margin-top: 0.25rem;
+    }
+
+    /* Selected filename label */
+    #file-label {
+      display: block;
+      font-size: 0.85rem;
+      color: #2b6cb0;
+      margin-bottom: 1.25rem;
+      min-height: 1.2em;
+      font-weight: 500;
+    }
+
+    /* ── Upload button ── */
+    button[type="submit"] {
+      width: 100%;
+      padding: 0.75rem;
+      background: #3182ce;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button[type="submit"]:hover {
+      background: #2b6cb0;
+    }
+
+    button[type="submit"]:disabled {
+      background: #a0aec0;
+      cursor: not-allowed;
+    }
+
+    /* ── Result box (shown after upload) ── */
+    #result {
+      margin-top: 1.5rem;
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      display: none;              /* hidden until a response arrives */
+      word-break: break-all;
+    }
+
+    #result.success {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      color: #276749;
+    }
+
+    #result.error {
+      background: #fff5f5;
+      border: 1px solid #feb2b2;
+      color: #c53030;
+    }
+
+    #result .label {
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    #result .filename {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #2d3748;
+      margin-top: 0.4rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>File Upload</h1>
+    <p class="subtitle">Upload any file to the server. It will be saved with a unique name.</p>
+
+    <!--
+      enctype="multipart/form-data" is REQUIRED for file uploads.
+      Without it, only the filename (text) is sent, not the file contents.
+    -->
+    <form id="upload-form" enctype="multipart/form-data">
+
+      <!-- Drop zone / file picker -->
+      <div class="drop-zone" id="drop-zone">
+        <div class="drop-zone-icon">📂</div>
+        <div class="drop-zone-text">Click to choose a file</div>
+        <div class="drop-zone-hint">or drag and drop it here</div>
+
+        <!--
+          The input name="file" must match what Flask reads in request.files["file"].
+          The input is invisible (opacity:0) but covers the whole drop zone.
+        -->
+        <input type="file" name="file" id="file-input" required />
+      </div>
+
+      <!-- Shows the selected filename -->
+      <span id="file-label">No file chosen</span>
+
+      <button type="submit" id="submit-btn">Upload File</button>
+    </form>
+
+    <!-- Result message shown after the server responds -->
+    <div id="result"></div>
+  </div>
+
+  <script>
+    const form       = document.getElementById("upload-form");
+    const fileInput  = document.getElementById("file-input");
+    const fileLabel  = document.getElementById("file-label");
+    const submitBtn  = document.getElementById("submit-btn");
+    const resultBox  = document.getElementById("result");
+    const dropZone   = document.getElementById("drop-zone");
+
+    // ── Update label when user picks a file ──────────────────────────────────
+    fileInput.addEventListener("change", () => {
+      fileLabel.textContent = fileInput.files.length > 0
+        ? `Selected: ${fileInput.files[0].name}`
+        : "No file chosen";
+    });
+
+    // ── Drag-and-drop visual feedback ─────────────────────────────────────────
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("dragover");
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      // Copy the dropped file into the file input
+      if (e.dataTransfer.files.length > 0) {
+        fileInput.files = e.dataTransfer.files;
+        fileLabel.textContent = `Selected: ${fileInput.files[0].name}`;
+      }
+    });
+
+    // ── Handle form submission with fetch (no page reload) ────────────────────
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();   // Stop the browser's default form submit
+
+      // Disable button while uploading to prevent double-clicks
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Uploading…";
+      resultBox.style.display = "none";
+
+      // FormData automatically packages the file as multipart/form-data
+      const formData = new FormData(form);
+
+      try {
+        // Send POST request to /upload
+        const response = await fetch("/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        // Parse the JSON response from Flask
+        const data = await response.json();
+
+        // Show the result in the result box
+        resultBox.style.display = "block";
+
+        if (data.success) {
+          resultBox.className = "success";
+          resultBox.innerHTML = `
+            <div class="label">✅ Upload successful!</div>
+            <div>${data.message}</div>
+            <div class="filename">Saved as: ${data.filename}</div>
+          `;
+        } else {
+          resultBox.className = "error";
+          resultBox.innerHTML = `
+            <div class="label">❌ Upload failed</div>
+            <div>${data.message}</div>
+          `;
+        }
+      } catch (err) {
+        // Network error or server down
+        resultBox.style.display = "block";
+        resultBox.className = "error";
+        resultBox.innerHTML = `
+          <div class="label">❌ Network error</div>
+          <div>Could not reach the server. Is it running?</div>
+        `;
+      } finally {
+        // Re-enable the button regardless of outcome
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Upload File";
+      }
+    });
+  </script>
+
+</body>
+</html>
