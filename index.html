@@ -1,285 +1,337 @@
-<!DOCTYPE html>
-<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flask S3 File Upload</title>
+  <!-- External CSS file — Flask serves files from the static/ folder -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   <title>Flask File Upload</title>
   <style>
-    /* ── Page layout ── */
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
+    /* ── Reset ─────────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ── Page ──────────────────────────────────────────────────────────────── */
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
       background: #f0f4f8;
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 2rem;
+      padding: 1.5rem;
     }
-
-    /* ── Card ── */
+    /* ── Card ──────────────────────────────────────────────────────────────── */
     .card {
       background: #ffffff;
-      border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-      padding: 2.5rem 2rem;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+      padding: 2.5rem 2.25rem 2rem;
       width: 100%;
-      max-width: 480px;
+      max-width: 460px;
     }
-
-    h1 {
-      font-size: 1.5rem;
-      color: #1a202c;
-      margin-bottom: 0.4rem;
-    }
-
-    .subtitle {
-      color: #718096;
-      font-size: 0.9rem;
+    /* ── Header ────────────────────────────────────────────────────────────── */
+    .card-header {
+      text-align: center;
       margin-bottom: 2rem;
     }
-
-    /* ── Drop zone / file picker ── */
+    .card-header .icon { font-size: 2.75rem; line-height: 1; margin-bottom: 0.65rem; }
+    .card-header h1 {
+      font-size: 1.55rem;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 0.35rem;
+    }
+    .card-header p { color: #718096; font-size: 0.88rem; }
+    /* ── Drop zone ─────────────────────────────────────────────────────────── */
     .drop-zone {
+      position: relative;
       border: 2px dashed #cbd5e0;
-      border-radius: 8px;
-      padding: 2rem 1rem;
+      border-radius: 12px;
+      padding: 2rem 1.25rem;
       text-align: center;
       cursor: pointer;
-      transition: border-color 0.2s, background 0.2s;
-      margin-bottom: 1.25rem;
-      position: relative;
+      transition: border-color .2s, background .2s;
+      margin-bottom: 0.75rem;
     }
-
-    .drop-zone:hover,
-    .drop-zone.dragover {
+    .drop-zone:hover, .drop-zone.drag-over {
       border-color: #4299e1;
       background: #ebf8ff;
     }
-
-    /* Hide the default file input but keep it clickable */
+    /* Real input is invisible but covers the whole zone */
     .drop-zone input[type="file"] {
       position: absolute;
       inset: 0;
-      opacity: 0;
-      cursor: pointer;
       width: 100%;
       height: 100%;
+      opacity: 0;
+      cursor: pointer;
     }
-
-    .drop-zone-icon {
-      font-size: 2.5rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .drop-zone-text {
-      color: #4a5568;
-      font-size: 0.95rem;
-    }
-
-    .drop-zone-hint {
-      color: #a0aec0;
-      font-size: 0.8rem;
-      margin-top: 0.25rem;
-    }
-
-    /* Selected filename label */
-    #file-label {
-      display: block;
-      font-size: 0.85rem;
-      color: #2b6cb0;
-      margin-bottom: 1.25rem;
-      min-height: 1.2em;
+    .dz-icon  { font-size: 2.25rem; margin-bottom: 0.45rem; }
+    .dz-title { font-weight: 600; color: #2d3748; font-size: .92rem; margin-bottom: .2rem; }
+    .dz-hint  { color: #a0aec0; font-size: .78rem; }
+    /* ── Chosen filename ───────────────────────────────────────────────────── */
+    .chosen-file {
+      text-align: center;
+      font-size: .82rem;
       font-weight: 500;
+      color: #3182ce;
+      min-height: 1.2rem;
+      margin-bottom: 1rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-
-    /* ── Upload button ── */
-    button[type="submit"] {
+    /* ── Badges ────────────────────────────────────────────────────────────── */
+    .badges {
+      display: flex;
+      gap: .4rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .badge {
+      background: #edf2f7;
+      color: #4a5568;
+      font-size: .7rem;
+      font-weight: 700;
+      padding: .2rem .55rem;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .badge-limit { background: #fff5f5; color: #e53e3e; }
+    /* ── Upload button ─────────────────────────────────────────────────────── */
+    .btn {
+      display: block;
       width: 100%;
-      padding: 0.75rem;
+      padding: .8rem;
       background: #3182ce;
       color: #fff;
       border: none;
-      border-radius: 8px;
+      border-radius: 10px;
       font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: background .18s, transform .1s;
     }
-
-    button[type="submit"]:hover {
-      background: #2b6cb0;
+    .btn:hover:not(:disabled) { background: #2b6cb0; }
+    .btn:active:not(:disabled) { transform: scale(.98); }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    /* ── Progress bar ──────────────────────────────────────────────────────── */
+    .progress-wrap { display: none; margin-top: 1rem; }
+    .progress-track {
+      height: 6px;
+      background: #edf2f7;
+      border-radius: 999px;
+      overflow: hidden;
     }
-
-    button[type="submit"]:disabled {
-      background: #a0aec0;
-      cursor: not-allowed;
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4299e1, #667eea);
+      border-radius: 999px;
+      width: 0%;
+      transition: width .3s ease;
     }
-
-    /* ── Result box (shown after upload) ── */
-    #result {
-      margin-top: 1.5rem;
-      padding: 1rem 1.25rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      display: none;              /* hidden until a response arrives */
-      word-break: break-all;
+    /* ── Alert / result ────────────────────────────────────────────────────── */
+    .alert {
+      display: none;
+      margin-top: 1.25rem;
+      padding: 1rem 1.15rem;
+      border-radius: 10px;
+      font-size: .88rem;
+      line-height: 1.6;
+      animation: fadeUp .25s ease;
     }
-
-    #result.success {
+    .alert-success {
+      display: block;
       background: #f0fff4;
       border: 1px solid #9ae6b4;
       color: #276749;
     }
-
-    #result.error {
+    .alert-error {
+      display: block;
       background: #fff5f5;
       border: 1px solid #feb2b2;
       color: #c53030;
     }
-
-    #result .label {
-      font-weight: 700;
-      margin-bottom: 0.25rem;
-    }
-
-    #result .filename {
+    .alert strong { display: block; margin-bottom: .2rem; }
+    .alert .saved-name {
       font-family: monospace;
-      font-size: 0.85rem;
-      color: #2d3748;
-      margin-top: 0.4rem;
+      font-size: .8rem;
+      opacity: .85;
+      margin-top: .3rem;
+    }
+    /* ── Animation ─────────────────────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0);   }
+    }
+    /* ── Responsive ────────────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .card { padding: 1.75rem 1.25rem 1.5rem; }
     }
   </style>
 </head>
 <body>
-
+  <div class="page">
+    <!-- ── Page header ──────────────────────────────────────────────────── -->
+    <header class="page-header">
+      <div class="header-icon">☁️</div>
+      <h1>S3 File Upload</h1>
+      <p>Upload files directly to AWS S3. Supports PDF, JPG, JPEG, PNG · Max 5 MB.</p>
+    </header>
+    <!-- ── Upload card ──────────────────────────────────────────────────── -->
+    <section class="card">
+      <h2 class="card-title">Upload a File</h2>
+      <!--
+        enctype="multipart/form-data" is required for file uploads.
+        Without it, only the filename (text) is sent — not the actual file.
+      -->
+      <form id="upload-form" enctype="multipart/form-data">
+        <!-- Drop zone -->
+        <div class="drop-zone" id="drop-zone">
+          <div class="drop-icon">📂</div>
+          <div class="drop-title">Click to browse or drag &amp; drop</div>
+          <div class="drop-hint">One file at a time</div>
+          <!--
+            name="file" must match request.files["file"] in Flask.
+            The input is invisible but positioned over the whole drop zone.
+          -->
+          <input
+            type="file"
+            name="file"
+            id="file-input"
+            accept=".pdf,.jpg,.jpeg,.png"
+          />
+        </div>
+        <!-- Shows the chosen filename -->
+        <p class="chosen-name" id="chosen-name">No file chosen</p>
+        <!-- Allowed-type badges -->
+        <div class="badges">
+          <span class="badge">PDF</span>
+          <span class="badge">JPG</span>
+          <span class="badge">JPEG</span>
+          <span class="badge">PNG</span>
+          <span class="badge badge-limit">Max 5 MB</span>
+        </div>
+        <button type="submit" class="btn" id="submit-btn">
+          <span id="btn-text">Upload to S3</span>
+        </button>
+      </form>
+      <!-- Progress bar (shown while uploading) -->
+      <div class="progress-wrap" id="progress-wrap">
+        <div class="progress-track">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+        <p class="progress-label">Uploading…</p>
   <div class="card">
-    <h1>File Upload</h1>
-    <p class="subtitle">Upload any file to the server. It will be saved with a unique name.</p>
-
+    <div class="card-header">
+      <div class="icon">📁</div>
+      <h1>File Upload</h1>
+      <p>Select a file from your device to upload it to the server.</p>
+    </div>
     <!--
-      enctype="multipart/form-data" is REQUIRED for file uploads.
-      Without it, only the filename (text) is sent, not the file contents.
+      enctype="multipart/form-data" is required for file uploads.
+      Without it, the browser only sends the filename — not the file contents.
     -->
     <form id="upload-form" enctype="multipart/form-data">
-
-      <!-- Drop zone / file picker -->
+      <!-- Drop zone — the hidden <input> covers the entire area -->
       <div class="drop-zone" id="drop-zone">
-        <div class="drop-zone-icon">📂</div>
-        <div class="drop-zone-text">Click to choose a file</div>
-        <div class="drop-zone-hint">or drag and drop it here</div>
-
+        <div class="dz-icon">📂</div>
+        <div class="dz-title">Click to browse or drag &amp; drop</div>
+        <div class="dz-hint">One file at a time</div>
         <!--
-          The input name="file" must match what Flask reads in request.files["file"].
-          The input is invisible (opacity:0) but covers the whole drop zone.
+          name="file" must match request.files["file"] in Flask.
+          accept limits the browser's file picker to these types.
         -->
-        <input type="file" name="file" id="file-input" required />
+        <input type="file" name="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png" />
       </div>
-
-      <!-- Shows the selected filename -->
-      <span id="file-label">No file chosen</span>
-
-      <button type="submit" id="submit-btn">Upload File</button>
+      <!-- Server response message -->
+      <div class="alert" id="alert"></div>
+    </section>
+    <!-- ── Uploaded files list ───────────────────────────────────────────── -->
+    <section class="card files-card">
+      <div class="files-header">
+        <h2 class="card-title">Uploaded Files</h2>
+        <!-- Reload the list without a full page refresh -->
+        <button class="btn btn-sm btn-outline" id="refresh-btn" onclick="refreshFileList()">
+          ↻ Refresh
+        </button>
+      <!-- Displays the name of the chosen file -->
+      <p class="chosen-file" id="chosen-file">No file chosen</p>
+      <!-- Allowed types and size limit at a glance -->
+      <div class="badges">
+        <span class="badge">PDF</span>
+        <span class="badge">JPG</span>
+        <span class="badge">JPEG</span>
+        <span class="badge">PNG</span>
+        <span class="badge badge-limit">Max 2 MB</span>
+      </div>
+      <!--
+        Jinja2 template block — Flask fills this on the initial page load.
+        The refreshFileList() JS function replaces it dynamically afterward.
+      -->
+      <div id="file-list">
+        {% if list_error %}
+          <div class="alert alert-error">
+            <strong>Could not load files:</strong> {{ list_error }}
+          </div>
+        {% elif files %}
+          <table class="file-table">
+            <thead>
+              <tr>
+                <th>Filename</th>
+                <th>Size</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for f in files %}
+              <tr>
+                <td class="file-name-cell">
+                  <!-- Show only the original part after the UUID prefix -->
+                  {{ f.name.split("_", 1)[1] if "_" in f.name else f.name }}
+                </td>
+                <td class="file-size-cell">{{ f.size_kb }} KB</td>
+                <td>
+                  <a class="link-btn" href="{{ f.url }}" target="_blank" rel="noopener">
+                    View / Download
+                  </a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="empty-state">No files uploaded yet.</p>
+        {% endif %}
+      <button type="submit" class="btn" id="submit-btn">Upload File</button>
     </form>
-
-    <!-- Result message shown after the server responds -->
-    <div id="result"></div>
-  </div>
-
+    <!-- Animated progress bar while the request is in-flight -->
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </section>
+  </div><!-- /.page -->
+    </div>
+    <!-- Success or error message from the server -->
+    <div class="alert" id="alert"></div>
+  </div><!-- /.card -->
   <script>
-    const form       = document.getElementById("upload-form");
-    const fileInput  = document.getElementById("file-input");
-    const fileLabel  = document.getElementById("file-label");
-    const submitBtn  = document.getElementById("submit-btn");
-    const resultBox  = document.getElementById("result");
-    const dropZone   = document.getElementById("drop-zone");
-
-    // ── Update label when user picks a file ──────────────────────────────────
-    fileInput.addEventListener("change", () => {
-      fileLabel.textContent = fileInput.files.length > 0
-        ? `Selected: ${fileInput.files[0].name}`
-        : "No file chosen";
-    });
-
-    // ── Drag-and-drop visual feedback ─────────────────────────────────────────
-    dropZone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dropZone.classList.add("dragover");
-    });
-
-    dropZone.addEventListener("dragleave", () => {
-      dropZone.classList.remove("dragover");
-    });
-
-    dropZone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      dropZone.classList.remove("dragover");
-      // Copy the dropped file into the file input
-      if (e.dataTransfer.files.length > 0) {
-        fileInput.files = e.dataTransfer.files;
-        fileLabel.textContent = `Selected: ${fileInput.files[0].name}`;
-      }
-    });
-
-    // ── Handle form submission with fetch (no page reload) ────────────────────
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();   // Stop the browser's default form submit
-
-      // Disable button while uploading to prevent double-clicks
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Uploading…";
-      resultBox.style.display = "none";
-
-      // FormData automatically packages the file as multipart/form-data
-      const formData = new FormData(form);
-
-      try {
-        // Send POST request to /upload
-        const response = await fetch("/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        // Parse the JSON response from Flask
-        const data = await response.json();
-
-        // Show the result in the result box
-        resultBox.style.display = "block";
-
-        if (data.success) {
-          resultBox.className = "success";
-          resultBox.innerHTML = `
-            <div class="label">✅ Upload successful!</div>
-            <div>${data.message}</div>
-            <div class="filename">Saved as: ${data.filename}</div>
-          `;
-        } else {
-          resultBox.className = "error";
-          resultBox.innerHTML = `
-            <div class="label">❌ Upload failed</div>
-            <div>${data.message}</div>
-          `;
-        }
-      } catch (err) {
-        // Network error or server down
-        resultBox.style.display = "block";
-        resultBox.className = "error";
-        resultBox.innerHTML = `
-          <div class="label">❌ Network error</div>
-          <div>Could not reach the server. Is it running?</div>
-        `;
-      } finally {
-        // Re-enable the button regardless of outcome
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Upload File";
-      }
-    });
-  </script>
-
-</body>
-</html>
+    // ── Element references ────────────────────────────────────────────────
+    const form         = document.getElementById("upload-form");
+    const fileInput    = document.getElementById("file-input");
+    const chosenName   = document.getElementById("chosen-name");
+    const chosenFile   = document.getElementById("chosen-file");
+    const submitBtn    = document.getElementById("submit-btn");
+    const btnText      = document.getElementById("btn-text");
+    const progressWrap = document.getElementById("progress-wrap");
+    const progressFill = document.getElementById("progress-fill");
+    const alertBox     = document.getElementById("al...
+[truncated]
+[truncated]
+[truncated]
+-1
++1
+[truncated]
+[truncated]
