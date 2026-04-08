@@ -1,33 +1,68 @@
-from flask import Flask, render_template, request, jsonify
-from werkzeug.exceptions import RequestEntityTooLarge
+from flask import Flask, request, jsonify, render_template_string
+import os
+import uuid
 
 app = Flask(__name__)
 
-# Max file size (example: 5 MB)
-MAX_FILE_SIZE_MB = 5
-app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE_MB * 1024 * 1024
+# Upload folder
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 
-@app.route('/')
+#  Home Route (Simple Upload Form)
+@app.route("/")
 def home():
-    return "<h2>Flask App is Running ✅</h2>"
+    return render_template_string("""
+    <h2>Upload File</h2>
+    <form method="POST" action="/upload" enctype="multipart/form-data">
+        <input type="file" name="file" required>
+        <button type="submit">Upload</button>
+    </form>
+    """)
 
 
-@app.errorhandler(RequestEntityTooLarge)
-def handle_too_large(error):
-    """
-    Return a JSON 413 error instead of Flask's default HTML page.
+#  Upload API
+@app.route("/upload", methods=["POST"])
+def upload_file():
+    if "file" not in request.files:
+        return jsonify({"error": "No file part in request"}), 400
 
-    Handle HTTP 413 - Request Entity Too Large.
-    Flask raises this automatically when the incoming body exceeds
-    MAX_CONTENT_LENGTH. We return a clean JSON response instead of
-    the default HTML error page.
-    """
+    file = request.files["file"]
+
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    # Generate unique ID
+    file_id = str(uuid.uuid4())
+
+    # Extract file extension
+    filename = file.filename
+    ext = filename.split(".")[-1]
+
+    # New filename (unique)
+    new_filename = f"{file_id}.{ext}"
+
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], new_filename)
+
+    # Save file
+    file.save(file_path)
+
+    # File size
+    file_size = os.path.getsize(file_path)
+
+    # JSON response
     return jsonify({
-        "success": False,
-        "message": f"File too large. Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
-    }), 413
+        "id": file_id,
+        "filename": filename,
+        "stored_name": new_filename,
+        "size_bytes": file_size,
+        "type": ext,
+        "path": file_path
+    })
 
 
-if __name__== '__main__':
+# Run app
+if __name__ == "__main__":
     app.run(debug=True)
